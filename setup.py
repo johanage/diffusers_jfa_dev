@@ -243,7 +243,7 @@ install_requires = [
 ]
 
 setup(
-    name="diffusers",
+    name="diffusers_jfa",
     version="0.24.0.dev0",  # expected format is one of x.y.z.dev0, or x.y.z.rc1 or x.y.z (no to dashes, yes to dots)
     description="State-of-the-art diffusion in PyTorch and JAX.",
     long_description=open("README.md", "r", encoding="utf-8").read(),
@@ -252,7 +252,7 @@ setup(
     license="Apache",
     author="The HuggingFace team",
     author_email="patrick@huggingface.co",
-    url="https://github.com/huggingface/diffusers",
+    url="https://github.com/johanage/diffusers_jfa_dev.git",
     package_dir={"": "src"},
     packages=find_packages("src"),
     package_data={"diffusers": ["py.typed"]},

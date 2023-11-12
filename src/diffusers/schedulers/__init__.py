@@ -84,6 +84,7 @@ else:
     _import_structure["scheduling_lms_discrete_flax"] = ["FlaxLMSDiscreteScheduler"]
     _import_structure["scheduling_pndm_flax"] = ["FlaxPNDMScheduler"]
     _import_structure["scheduling_sde_ve_flax"] = ["FlaxScoreSdeVeScheduler"]
+    _import_structure["scheduling_sde_vp_flax"] = ["FlaxScoreSdeVpScheduler"]
     _import_structure["scheduling_utils_flax"] = [
         "FlaxKarrasDiffusionSchedulers",
         "FlaxSchedulerMixin",
