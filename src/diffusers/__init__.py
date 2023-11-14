@@ -383,6 +383,7 @@ else:
             "FlaxPNDMScheduler",
             "FlaxSchedulerMixin",
             "FlaxScoreSdeVeScheduler",
+            "FlaxScoreSdeVpScheduler",
         ]
     )
 

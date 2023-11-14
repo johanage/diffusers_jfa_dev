@@ -36,29 +36,22 @@ from typing import Optional, Tuple, Union
 @flax.struct.dataclass
 class FlaxScoreSdeVpSchedulerState:
     common              : CommonSchedulerState
-    final_alpha_cumprod : jnp.array
-
     # setable values
     init_noise_sigma    : jaxlib.xla_extension.ArrayImpl
     timesteps           : jaxlib.xla_extension.ArrayImpl
-    #t                   : jaxlib.xla_extension.ArrayImpl
     num_inference_steps : Optional[int] = None
 
     @classmethod
     def create(
         cls,
         common              : CommonSchedulerState,
-        final_alpha_cumprod : jaxlib.xla_extension.ArrayImpl,
         init_noise_sigma    : jaxlib.xla_extension.ArrayImpl,
         timesteps           : jaxlib.xla_extension.ArrayImpl,
-        #t                   : jaxlib.xla_extension.ArrayImpl,
     ):
         return cls(
             common              = common,
-            final_alpha_cumprod = final_alpha_cumprod,
             init_noise_sigma    = init_noise_sigma,
             timesteps           = timesteps,
-            #t                   = t,
         )
 
 
@@ -77,8 +70,6 @@ class FlaxSdeVpOutput(FlaxSchedulerOutput):
     """
 
     state            : FlaxScoreSdeVpSchedulerState
-    prev_sample      : jaxlib.xla_extension.ArrayImpl
-    prev_sample_mean : Optional[jaxlib.xla_extension.ArrayImpl] = None
 
 class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
     """
@@ -103,28 +94,20 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
     def __init__(
         self,
         num_train_timesteps : int                   = 1000,
-        snr                 : float                 = 0.15,
-        # beta_start and *_end is *_min and *_max divided by num_train_timesteps
-        beta_min            : float                 = .1,
-        beta_max            : float                 = 20,
-        beta_start          : float                 = .1/1000,
-        beta_end            : float                 = 20/1000,
+        beta_start          : float                 = .0001,
+        beta_end            : float                 = 0.02,
         beta_schedule       : str                   = "linear",
+        snr                 : float                 = 0.15,
+        trained_betas       : Optional[jnp.ndarray] = None,
+        clip_sample         : bool                  = True,
+        dtype               : jnp.dtype             = jnp.float32
+        # not common with DDPM
         set_alphas_to_one   : bool                  = True,
-        # 1e-5 for training and likelihood according to Song et al.
-        # 1e-3 for sampling 
-        sampling_eps        : float                 = 1e-5, 
-        # reduntant?
         trained_betas       : Optional[jaxlib.xla_extension.ArrayImpl] = None,
-        steps_offset        : int                   = 0,
+        training_eps        : float = 1e-5,
+        sampling_eps        : float = 1e-3,
     ):
-        # reduntant?
-        self.sigmas          = None
-        self.discrete_sigmas = None
-        # TODO figure out if it's possible to just use beta_min and beta_max
-        # and then just compute *_start/end
-        #self.beta_start = self.beta_min / self.num_train_timesteps
-        #self.beta_end   = self.beta_max / self.num_train_timesteps
+        self.dtype = dtype
 
     def create_state(
         self,
@@ -132,23 +115,25 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
     ) -> FlaxScoreSdeVpSchedulerState:
         
         if common is None:
-            common = CommonSchedulerState.create(self)
-
-        final_alpha_cumprod = (
-            jnp.array(1.0, dtype=self.dtype) if self.config.set_alphas_to_one else common.alphas_cumprod[0]
-        )
+            if self.config.beta_schedule in ["linear", "scaled_linear", "squaredcos_cap_v2"]
+                common = CommonSchedulerState.create(self)
+            elif self.config.beta_schedule == "exp_vp_sde":
+                # redundant if it is the continuous case of a DDPM linear beta schedule
+                # following perturbation kernel in eq. (32) in Song et al. 10 Feb 2021
+                beta_min = self.config.beta_start * self.config.num_train_steps
+                beta_max = self.config.beta_end   * self.config.num_train_steps
+                t = jnp.linspace(self.config.training_eps, 1, self.config.num_train_steps)
+            else: ValueError("Scheduler config beta schedule not set correctly")
 
         # std of the initial noise distribution
         init_noise_sigma = jnp.array(1.0, dtype=self.dtype)
         # timestep indices
         timesteps = jnp.arange(0, self.config.num_train_timesteps).round()[::-1]
-        #t = jnp.linspace(1, self.sampling_eps, self.num_train_timesteps)
         return FlaxScoreSdeVpSchedulerState.create(
             common              = common,
             final_alpha_cumprod = final_alpha_cumprod,
             init_noise_sigma    = init_noise_sigma,
             timesteps           = timesteps,
-            #t                   = t,
         )
     
     def set_timesteps(
@@ -156,39 +141,37 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
         state               : FlaxScoreSdeVpSchedulerState,
         num_inference_steps : int, 
         shape               : Tuple = (),
-        sampling_eps        : float = None,
     ) -> FlaxScoreSdeVpSchedulerState:
 
-        sampling_eps = sampling_eps if sampling_eps is not None else self.config.sampling_eps
-        timesteps = jnp.arange(0, num_inference_steps).round()[::-1]
-        #t = jnp.linspace(1, sampling_eps, num_inference_steps)
+        step_ratio = self.config.num_train_timesteps // num_inference_steps 
+        timesteps = ( jnp.arange(0, num_inference_steps)*step_ratio ).round()[::-1]
         return state.replace(
             num_inference_steps = num_inference_steps,
             timesteps           = timesteps,
-            #t                   = t,
         )
 
     def _get_variance(
         self, 
-        state         : FlaxScoreSdeVpSchedulerState, 
-        timestep      : int, 
-        prev_timestep : int
+        state : FlaxScoreSdeVpSchedulerState, 
+        t     : int, 
     ) -> jnp.float32:
         
-        alpha_prod_t = state.common.alphas_cumprod[timestep]
+        alpha_prod_t = state.common.alphas_cumprod[t]
         alpha_prod_t_prev = jnp.where(
-            prev_timestep >= 0, state.common.alphas_cumprod[prev_timestep], state.final_alpha_cumprod
+            t > 0, state.common.alphas_cumprod[t-1], jnp.array(1.0, dtype=self.dtype)
         )
         beta_prod_t = 1 - alpha_prod_t
         beta_prod_t_prev = 1 - alpha_prod_t_prev
 
-        variance = (beta_prod_t_prev / beta_prod_t) * (1 - alpha_prod_t / alpha_prod_t_prev)
-
+        #Equiv: variance = (beta_prod_t_prev / beta_prod_t) * (1 - alpha_prod_t / alpha_prod_t_prev)
+        variance = (beta_prod_t_prev / beta_prod_t) * state.common.betas[t]
+        variance = jnp.clip(variance, a_min = 1e-20)
         return variance
 
     """
     -------------------------------------
     Functions used in Predictor START
+    NOTE: this should be sent to a separate SDE util script
     -------------------------------------
     """
     def marginal_prob(
@@ -329,7 +312,7 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
             raise ValueError(
                 "`state.timesteps` is not set, you need to run 'set_timesteps' after creating the scheduler"
             )
-        
+        t = timestep 
         if alg3:
             """
             ---------------------------------------------------
@@ -342,7 +325,7 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
             ----------------------------------------------------
             """
             # select the beta given timestep index
-            beta_t = state.common.betas[timestep]
+            beta_t = state.common.betas[t]
             # broadcast to match shape of model output
             beta_t = broadcast_to_shape_from_left(beta_t, model_output.shape)
             # last term step 3
