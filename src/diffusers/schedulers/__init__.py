@@ -173,6 +173,7 @@ if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
         from .scheduling_lms_discrete_flax import FlaxLMSDiscreteScheduler
         from .scheduling_pndm_flax import FlaxPNDMScheduler
         from .scheduling_sde_ve_flax import FlaxScoreSdeVeScheduler
+        from .scheduling_sde_vp_flax import FlaxScoreSdeVpScheduler
         from .scheduling_utils_flax import (
             FlaxKarrasDiffusionSchedulers,
             FlaxSchedulerMixin,

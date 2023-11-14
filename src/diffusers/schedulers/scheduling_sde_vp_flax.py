@@ -100,10 +100,9 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
         snr                 : float                 = 0.15,
         trained_betas       : Optional[jnp.ndarray] = None,
         clip_sample         : bool                  = True,
-        dtype               : jnp.dtype             = jnp.float32
+        dtype               : jnp.dtype             = jnp.float32,
         # not common with DDPM
         set_alphas_to_one   : bool                  = True,
-        trained_betas       : Optional[jaxlib.xla_extension.ArrayImpl] = None,
         training_eps        : float = 1e-5,
         sampling_eps        : float = 1e-3,
     ):
@@ -115,7 +114,7 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
     ) -> FlaxScoreSdeVpSchedulerState:
         
         if common is None:
-            if self.config.beta_schedule in ["linear", "scaled_linear", "squaredcos_cap_v2"]
+            if self.config.beta_schedule in ["linear", "scaled_linear", "squaredcos_cap_v2"]:
                 common = CommonSchedulerState.create(self)
             elif self.config.beta_schedule == "exp_vp_sde":
                 # redundant if it is the continuous case of a DDPM linear beta schedule
@@ -131,7 +130,6 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
         timesteps = jnp.arange(0, self.config.num_train_timesteps).round()[::-1]
         return FlaxScoreSdeVpSchedulerState.create(
             common              = common,
-            final_alpha_cumprod = final_alpha_cumprod,
             init_noise_sigma    = init_noise_sigma,
             timesteps           = timesteps,
         )
