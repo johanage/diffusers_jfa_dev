@@ -255,7 +255,7 @@ setup(
     url="https://github.com/johanage/diffusers_jfa_dev.git",
     package_dir={"": "src"},
     packages=find_packages("src"),
-    package_data={"diffusers": ["py.typed"]},
+    package_data={"diffusers_jfa": ["py.typed"]},
     include_package_data=True,
     python_requires=">=3.8.0",
     install_requires=list(install_requires),

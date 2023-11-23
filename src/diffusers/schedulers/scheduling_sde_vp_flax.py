@@ -176,9 +176,11 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
         self,
         t : jaxlib.xla_extension.ArrayImpl,
     ) -> Tuple :
+        beta_min = self.config.beta_start * self.config.num_train_timesteps
+        beta_max = self.config.beta_end   * self.config.num_train_timesteps
         #Log of mean coefficient from Eq. 33 in Song et al.
-        a = -0.25 * t**2 * (self.config.beta_max - self.config.beta_min)
-        b = -0.5 * t * self.config.beta_min
+        a = -0.25 * t**2 * (beta_max - beta_min)
+        b = -0.5 * t * beta_min
         log_mean_coeff = a + b
         mean = jnp.exp(log_mean_coeff)
         std = jnp.sqrt(1.0 - jnp.exp(2.0 * log_mean_coeff))
@@ -361,7 +363,6 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
         if not return_dict:
             return (prev_sample, prev_sample_mean, state)
         return FlaxSdeVpOutput(prev_sample      = prev_sample, 
-                               prev_sample_mean = prev_sample_mean, 
                                state            = state)
     
     def step_correct(
