@@ -56,4 +56,6 @@ axs[0,-1].plot(noisy_imgs_vp.var(axis=(1,2,3) ), "--", label = "VP SDE")
 axs[1,-1].plot(noisy_imgs_vp.mean(axis=(1,2,3) ), "--", label = "VP SDE")
 axs[0,-1].set_title("Variance"); axs[0,-1].legend()
 axs[1,-1].set_title("Mean"); axs[1,-1].legend()
-fig.show()
+#fig.show()
+import os
+fig.savefig(os.getcwd() + "/ddpm_vp_scheduler_comparison.png")
