@@ -39,19 +39,22 @@ class FlaxScoreSdeVpSchedulerState:
     # setable values
     init_noise_sigma    : jaxlib.xla_extension.ArrayImpl
     timesteps           : jaxlib.xla_extension.ArrayImpl
+    t                   : jaxlib.xla_extension.ArrayImpl
     num_inference_steps : Optional[int] = None
-
+    # TODO: include the "continuous" time t in [eps, 1]
     @classmethod
     def create(
         cls,
         common              : CommonSchedulerState,
         init_noise_sigma    : jaxlib.xla_extension.ArrayImpl,
         timesteps           : jaxlib.xla_extension.ArrayImpl,
+        t                   : jaxlib.xla_extension.ArrayImpl,
     ):
         return cls(
             common              = common,
             init_noise_sigma    = init_noise_sigma,
             timesteps           = timesteps,
+            t                   = t,
         )
 
 
@@ -83,7 +86,6 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
     For more information, see the original paper: https://arxiv.org/abs/2011.13456
     """
     
-    #dtype = jnp.dtype
     dtype = jnp.float32
 
     @property
@@ -128,10 +130,12 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
         init_noise_sigma = jnp.array(1.0, dtype=self.dtype)
         # timestep indices
         timesteps = jnp.arange(0, self.config.num_train_timesteps).round()[::-1]
+        t         = jnp.linspace(self.config.sampling_eps, 1, self.config.num_train_timesteps)[::-1]
         return FlaxScoreSdeVpSchedulerState.create(
             common              = common,
             init_noise_sigma    = init_noise_sigma,
             timesteps           = timesteps,
+            t                   = t,
         )
     
     def set_timesteps(
@@ -143,9 +147,11 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
 
         step_ratio = self.config.num_train_timesteps // num_inference_steps 
         timesteps = ( jnp.arange(0, num_inference_steps)*step_ratio ).round()[::-1]
+        t = self.t[timesteps]
         return state.replace(
             num_inference_steps = num_inference_steps,
             timesteps           = timesteps,
+            t                   = t,
         )
 
     def _get_variance(
@@ -172,6 +178,8 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
     NOTE: this should be sent to a separate SDE util script
     -------------------------------------
     """
+    # TODO: inlcude the original sample here? the mean is not the mean but the factor in front of x_0 in the mean
+    #       see Eq 33 in Song et al.
     def marginal_prob(
         self,
         t : jaxlib.xla_extension.ArrayImpl,
@@ -185,7 +193,8 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
         mean = jnp.exp(log_mean_coeff)
         std = jnp.sqrt(1.0 - jnp.exp(2.0 * log_mean_coeff))
         return (mean, std) 
-   
+
+# TODO: separate the general SDE formulation in another script so that it can be used for other SDE schedulers
     def sde(
         self,
         t            : jaxlib.xla_extension.ArrayImpl,
@@ -438,6 +447,7 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
 
         return FlaxSdeVpOutput(prev_sample=prev_sample, state=state)
     
+    # TODO: rewrite this to match the perturbatino kernel in Song et al App. C p. 16 eq. 33
     def add_noise(
         self,
         state            : FlaxScoreSdeVpSchedulerState,
@@ -445,7 +455,11 @@ class FlaxScoreSdeVpScheduler(FlaxSchedulerMixin, ConfigMixin):
         noise            : jaxlib.xla_extension.ArrayImpl,
         timesteps        : jaxlib.xla_extension.ArrayImpl,
     ) -> jaxlib.xla_extension.ArrayImpl:
-        return add_noise_common(state.common, original_samples, noise, timesteps)
+        #return add_noise_common(state.common, original_samples, noise, timesteps)
+        t_batch = state.t[::-1][timesteps]
+        means, stds = self.marginal_prob(t = t_batch)
+        noisy_batch_vp = means[:,None,None,None]*original_samples + stds[:,None,None,None]*noise
+        return noisy_batch_vp
 
     def get_velocity(
         self,
